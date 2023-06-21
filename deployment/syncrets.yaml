@@ -6,10 +6,9 @@ metadata:
   namespace: cert-manager
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
-  name: syncrets-role
-  namespace: cert-manager
+  name: syncrets-clusterrole
 rules:
 - apiGroups:
   - ""
@@ -25,10 +24,25 @@ kind: RoleBinding
 metadata:
   creationTimestamp: null
   name: syncrets-rolebinding
+  namespace: cert-manager
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: syncrets-role
+  kind: ClusterRole
+  name: syncrets-clusterrole
+subjects:
+- kind: ServiceAccount
+  name: syncrets-sa
+  namespace: cert-manager
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: syncrets-argocd-rolebinding
+  namespace: argocd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: syncrets-clusterrole
 subjects:
 - kind: ServiceAccount
   name: syncrets-sa

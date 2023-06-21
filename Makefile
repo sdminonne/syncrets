@@ -6,7 +6,7 @@ clean:
 	rm -rf syncrets
 
 image: build
-	podman build  -t localhost/syncrets:4.0 .
+	podman build  -t localhost/syncrets:latest .
 
 TEMP_FILE := $(shell mktemp  --suffix .tar)
 push-image: image
