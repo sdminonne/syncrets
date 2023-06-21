@@ -5,10 +5,10 @@ build:
 clean:
 	rm -rf syncrets
 
-image:
+image: build
 	podman build  -t localhost/syncrets:4.0 .
 
 TEMP_FILE := $(shell mktemp  --suffix .tar)
-deploy:
-	podman save localhost/resource-copier:latest > ${TEMP_FILE}
-	minikube -p mgmt image load ${TEMP_FILE}
+push-image: image
+	podman save localhost/syncrets:latest > ${TEMP_FILE}
+	minikube -p $(CLUSTER) image load ${TEMP_FILE}

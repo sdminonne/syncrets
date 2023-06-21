@@ -54,6 +54,6 @@ spec:
     spec:
       serviceAccountName: syncrets-sa
       containers:
-      - image: localhost/syncrets:4.0
+      - image: localhost/syncrets:latest
         name: syncrets
         imagePullPolicy: IfNotPresent
