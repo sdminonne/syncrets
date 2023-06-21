@@ -197,6 +197,7 @@ func (s *SyncData) Synchronize() error {
 }
 
 func onAddCertSecret(obj interface{}) {
+	log.Info("onAddCertSecret 1")
 	secret := obj.(*corev1.Secret)
 	if secret == nil {
 		log.Warnf("unable to type assert to secret object")
@@ -209,7 +210,7 @@ func onAddCertSecret(obj interface{}) {
 	log.Infof("onAddCertSecret IP: %s", ipSans)
 	log.Infof("onAddCertSecret CN: %s", cn)
 	if len(cn) == 0 {
-		log.Warnf("No common name found in secreet %s/%s", secret.GetNamespace(), secret.GetName())
+		log.Warnf("No common name found in secret %s/%s", secret.GetNamespace(), secret.GetName())
 		return
 	}
 	result, ok := cluster2Certs.Load(cn)
@@ -221,7 +222,7 @@ func onAddCertSecret(obj interface{}) {
 			log.Warnf("Couldn't update certificate secret for cluster %s: %v", cn, err)
 			return
 		}
-		log.Info("Updated certificate secret for cluster %s", cn)
+		log.Infof("Updated certificate secret for cluster %s", cn)
 	case false:
 		log.Infof("Storing info for cluster %s", cn)
 		cluster2Certs.Store(cn, NewSyncDataFromSecret(secret))
@@ -229,11 +230,14 @@ func onAddCertSecret(obj interface{}) {
 
 	if err := sd.Synchronize(); err != nil {
 		log.Errorf("onAddCertSecret: couldn't synchronize: %v", err)
+		return
 	}
+	log.Infof("Secret synchronized")
 	return
 }
 
 func onAddArgoClusterSecret(obj interface{}) {
+	log.Info("onAddArgoClusterSecret")
 	secret := obj.(*corev1.Secret)
 	if secret == nil {
 		log.Warnf("unable to type assert to secret object")
@@ -247,8 +251,8 @@ func onAddArgoClusterSecret(obj interface{}) {
 		return
 	}
 
-	result, ok := cluster2Certs.Load(string(secret.Data["name"]))
 	var sd SyncData
+	result, ok := cluster2Certs.Load(string(secret.Data["name"]))
 	if ok {
 		sd = result.(SyncData)
 		if err := sd.UpdateSyncDataWithArgoClusterCredential(&argoCreds); err != nil {
@@ -266,7 +270,9 @@ func onAddArgoClusterSecret(obj interface{}) {
 	cluster2Certs.Store(string(secret.Data["name"]), sd)
 	if err := sd.Synchronize(); err != nil {
 		log.Errorf("onAddArgoClusterSecret: couldn't synchronize: %v", err)
+		return
 	}
+	log.Infof("Secret synchronized")
 	return
 }
 
@@ -321,5 +327,4 @@ func DoTheJob() {
 	go certManagerSecretsInformer.Run(stopper)
 
 	<-stopper
-
 }
