@@ -8,6 +8,8 @@
 *.so
 *.dylib
 
+syncrets
+
 .idea/*
 
 # Test binary, built with `go test -c`
@@ -21,3 +23,5 @@
 
 # Go workspace file
 go.work
+
+*~

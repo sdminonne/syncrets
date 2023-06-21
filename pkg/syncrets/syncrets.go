@@ -3,6 +3,9 @@ package syncrets
 import (
 	"context"
 	"encoding/json"
+	"k8s.io/client-go/rest"
+	"os"
+	"path/filepath"
 	"sync"
 
 	"crypto/tls"
@@ -22,8 +25,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
-	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -142,11 +143,17 @@ func checkSecret(ctx context.Context,
 }
 
 func (s *SyncData) Synchronize() error {
+	if len(s.Host) == 0 {
+		log.Warnf("no host")
+		return nil
+	}
 	if s.Credential == nil {
-		return fmt.Errorf("no credential")
+		log.Warnf("no credential")
+		return nil
 	}
 	if s.Secret == nil {
-		return fmt.Errorf("no secret")
+		log.Info("nothing to synchronize")
+		return nil
 	}
 
 	restConfig, err := clientcmd.DefaultClientConfig.ClientConfig()
@@ -221,7 +228,7 @@ func onAddCertSecret(obj interface{}) {
 	}
 
 	if err := sd.Synchronize(); err != nil {
-		log.Errorf("couldn't synchronize: %v", err)
+		log.Errorf("onAddCertSecret: couldn't synchronize: %v", err)
 	}
 	return
 }
@@ -236,7 +243,7 @@ func onAddArgoClusterSecret(obj interface{}) {
 	server := string(secret.Data["server"])
 	var argoCreds ArgoClusterCredential
 	if err := json.Unmarshal(secret.Data["config"], &argoCreds); err != nil {
-		log.Errorf("unable to unmarshal secret to cluster: %v", err)
+		log.Errorf("unable to unmarshal secret to cluster with server %s: %v", server, err)
 		return
 	}
 
@@ -258,17 +265,23 @@ func onAddArgoClusterSecret(obj interface{}) {
 
 	cluster2Certs.Store(string(secret.Data["name"]), sd)
 	if err := sd.Synchronize(); err != nil {
-		log.Errorf("couldn't synchronize: %v", err)
+		log.Errorf("onAddArgoClusterSecret: couldn't synchronize: %v", err)
 	}
 	return
 }
 
 func DoTheJob() {
-	kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	config, err := rest.InClusterConfig()
 	if err != nil {
-		log.Fatal(err)
+		// maybe we're not in cluster
+		kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
+		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
+		if err != nil {
+			log.Fatal(err)
+		}
+		log.Infof("Not in cluster, using %s", kubeconfig)
 	}
+	// TODO add WorkQueue, add CrashHandler, add leaderEleection
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		log.Fatal(err)

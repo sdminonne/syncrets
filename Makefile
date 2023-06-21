@@ -1,12 +1,12 @@
 
 build:
-	go build -o syncrets .
+	CGO_ENABLED=0  GOOS=linux  go build  -installsuffix cgo -ldflags '-w' -o syncrets .
 
 clean:
 	rm -rf syncrets
 
 image:
-	podman build  -t localhost/resource-copier:latest .
+	podman build  -t localhost/syncrets:4.0 .
 
 TEMP_FILE := $(shell mktemp  --suffix .tar)
 deploy:
