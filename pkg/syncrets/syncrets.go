@@ -183,11 +183,14 @@ func (s *SyncData) Synchronize() error {
 	if err != nil {
 		return fmt.Errorf("unable to init networking client from restConfig: %v", err)
 	}
+	var wg sync.WaitGroup
+	defer wg.Done()
 	ingresses, err := netclient.Ingresses("").List(context.Background(), v1.ListOptions{})
 	for _, currentIngress := range ingresses.Items {
 		log.Infof("can you see the ingress? %s", currentIngress.GetName())
 		for _, tls := range currentIngress.Spec.TLS {
 			if tls.SecretName == s.Secret.GetName() {
+				wg.Add(1)
 				go checkSecret(context.TODO(), currentIngress, coreclient, secret)
 			}
 		}
