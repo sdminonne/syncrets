@@ -5,8 +5,9 @@ import (
 	//routev1 "github.com/openshift/api/route/v1"
 	//routev1client "github.com/openshift/client-go/route/clientset/versioned"
 
-	"github.com/spf13/cobra"
 	"syncrets/pkg/syncrets"
+
+	"github.com/spf13/cobra"
 )
 
 var rootCmd = &cobra.Command{
@@ -14,7 +15,7 @@ var rootCmd = &cobra.Command{
 	Short: "syncrets syncronize secrets across clusters",
 	Long:  `Really you need more?`,
 	Run: func(cmd *cobra.Command, args []string) {
-		syncrets.DoTheJob()
+		syncrets.DoTheJob2()
 	},
 }
 

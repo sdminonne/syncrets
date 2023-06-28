@@ -3,15 +3,18 @@ package syncrets
 import (
 	"context"
 	"encoding/json"
-	"k8s.io/client-go/rest"
 	"os"
 	"path/filepath"
 	"sync"
+
+	"k8s.io/client-go/rest"
 
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"time"
+
 	log "github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
@@ -25,7 +28,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
-	"time"
 )
 
 var (
@@ -54,8 +56,7 @@ type SyncData struct {
 }
 
 func NewSyncDataFromSecret(secret *corev1.Secret) SyncData {
-	return SyncData{Host: secret.ObjectMeta.Annotations["cert-manager.io/common-name"],
-		Secret: secret}
+	return SyncData{Secret: secret}
 }
 
 func (s *SyncData) UpdateSyncDataWithSecret(secret *corev1.Secret) error {
@@ -97,7 +98,6 @@ func isCertificateIsExpiredOrInvalid(secretGotten *corev1.Secret) bool {
 		return true
 	}
 	return false
-
 }
 
 // checkSecret creates or update the certificate secret
@@ -195,22 +195,20 @@ func (s *SyncData) Synchronize() error {
 			}
 		}
 	}
+	wg.Wait()
 
 	return nil
 }
 
 func onAddCertSecret(obj interface{}) {
-	log.Info("onAddCertSecret 1")
+	log.Info("onAddCertSecret")
 	secret := obj.(*corev1.Secret)
 	if secret == nil {
 		log.Warnf("unable to type assert to secret object")
 		return
 	}
 
-	ipSans := secret.ObjectMeta.Annotations["cert-manager.io/ip-sans"]
 	cn := secret.ObjectMeta.Annotations["cert-manager.io/common-name"]
-
-	log.Infof("onAddCertSecret IP: %s", ipSans)
 	log.Infof("onAddCertSecret CN: %s", cn)
 	if len(cn) == 0 {
 		log.Warnf("No common name found in secret %s/%s", secret.GetNamespace(), secret.GetName())
@@ -221,16 +219,9 @@ func onAddCertSecret(obj interface{}) {
 	switch ok {
 	case true:
 		sd = result.(SyncData)
-		if err := sd.UpdateSyncDataWithSecret(secret); err != nil {
-			log.Warnf("Couldn't update certificate secret for cluster %s: %v", cn, err)
-			return
-		}
-		log.Infof("Updated certificate secret for cluster %s", cn)
-	case false:
-		log.Infof("Storing info for cluster %s", cn)
-		cluster2Certs.Store(cn, NewSyncDataFromSecret(secret))
 	}
-
+	sd.Secret = secret
+	cluster2Certs.Store(cn, SyncData{Secret: secret})
 	if err := sd.Synchronize(); err != nil {
 		log.Errorf("onAddCertSecret: couldn't synchronize: %v", err)
 		return
@@ -248,6 +239,9 @@ func onAddArgoClusterSecret(obj interface{}) {
 	}
 
 	server := string(secret.Data["server"])
+	log.Infof("Got secret with server: %s", server)
+	name := string(secret.Data["name"])
+	log.Infof("Got secret with name: %s", name)
 	var argoCreds ArgoClusterCredential
 	if err := json.Unmarshal(secret.Data["config"], &argoCreds); err != nil {
 		log.Errorf("unable to unmarshal secret to cluster with server %s: %v", server, err)
@@ -255,22 +249,13 @@ func onAddArgoClusterSecret(obj interface{}) {
 	}
 
 	var sd SyncData
-	result, ok := cluster2Certs.Load(string(secret.Data["name"]))
+	sd.Host = server
+	result, ok := cluster2Certs.Load(name)
 	if ok {
 		sd = result.(SyncData)
-		if err := sd.UpdateSyncDataWithArgoClusterCredential(&argoCreds); err != nil {
-			log.Warnf("Couldn't update Argo credential for %s: %v", secret.Data["name"], err)
-			return
-		}
-		sd.Host = server
-		log.Infof("updating Argo credential for cluster %s", secret.Data["name"])
-	} else {
-		sd := NewSyncDataFromArgoClusterCredential(&argoCreds)
-		sd.Host = server
-		cluster2Certs.Store(string(secret.Data["name"]), sd)
 	}
-
-	cluster2Certs.Store(string(secret.Data["name"]), sd)
+	sd.Credential = &argoCreds
+	cluster2Certs.Store(name, sd)
 	if err := sd.Synchronize(); err != nil {
 		log.Errorf("onAddArgoClusterSecret: couldn't synchronize: %v", err)
 		return
@@ -301,7 +286,6 @@ func DoTheJob() {
 	})
 	argoClusterSecretFactory := informers.NewSharedInformerFactoryWithOptions(clientset, 5*time.Second,
 		informers.WithNamespace(ArgoNs), argoClusterSecretsOnly)
-
 	argoClusterSecretsInformer := argoClusterSecretFactory.Core().V1().Secrets().Informer()
 
 	certManagerSecretsOnly := informers.WithTweakListOptions(func(opts *v1.ListOptions) {
@@ -309,7 +293,6 @@ func DoTheJob() {
 	})
 	certManagerSecretsSecretFactory := informers.NewSharedInformerFactoryWithOptions(clientset, 5*time.Second,
 		informers.WithNamespace(CertsNs), certManagerSecretsOnly)
-
 	certManagerSecretsInformer := certManagerSecretsSecretFactory.Core().V1().Secrets().Informer()
 
 	stopper := make(chan struct{})
