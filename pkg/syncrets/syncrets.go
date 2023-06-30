@@ -59,15 +59,6 @@ func NewSyncDataFromSecret(secret *corev1.Secret) SyncData {
 	return SyncData{Secret: secret}
 }
 
-func (s *SyncData) UpdateSyncDataWithSecret(secret *corev1.Secret) error {
-	s.Secret = secret
-	return nil
-}
-
-func NewSyncDataFromArgoClusterCredential(argoClusterCredential *ArgoClusterCredential) SyncData {
-	return SyncData{Credential: argoClusterCredential}
-}
-
 func (s *SyncData) UpdateSyncDataWithArgoClusterCredential(argoClusterCredential *ArgoClusterCredential) error {
 	s.Credential = argoClusterCredential
 	return nil
@@ -241,6 +232,10 @@ func onAddArgoClusterSecret(obj interface{}) {
 	server := string(secret.Data["server"])
 	log.Infof("Got secret with server: %s", server)
 	name := string(secret.Data["name"])
+	if len(name) == 0 {
+		log.Errorf("no name definedd in secret. This looks like the 'in-cluster' ArgoCD secret. Skip it.")
+		return
+	}
 	log.Infof("Got secret with name: %s", name)
 	var argoCreds ArgoClusterCredential
 	if err := json.Unmarshal(secret.Data["config"], &argoCreds); err != nil {
