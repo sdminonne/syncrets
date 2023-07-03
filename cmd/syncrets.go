@@ -15,7 +15,7 @@ var rootCmd = &cobra.Command{
 	Short: "syncrets syncronize secrets across clusters",
 	Long:  `Really you need more?`,
 	Run: func(cmd *cobra.Command, args []string) {
-		syncrets.DoTheJob()
+		syncrets.DoTheJob2()
 	},
 }
 
