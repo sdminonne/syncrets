@@ -2,17 +2,9 @@ package syncrets
 
 import (
 	"context"
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"sync"
-
-	"k8s.io/client-go/rest"
-
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
-	"fmt"
 	"time"
 
 	log "github.com/sirupsen/logrus"
@@ -20,19 +12,13 @@ import (
 	netv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/runtime"
-	"k8s.io/client-go/informers"
-	"k8s.io/client-go/kubernetes"
 	corev1client "k8s.io/client-go/kubernetes/typed/core/v1"
-	netv1client "k8s.io/client-go/kubernetes/typed/networking/v1"
-	"k8s.io/client-go/tools/cache"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
 )
 
 var (
 	ArgoNs, CertsNs string
-	cluster2Certs   sync.Map
+	//cluster2Certs   sync.Map
 )
 
 type ArgoClusterCredential struct {
@@ -53,15 +39,6 @@ type SyncData struct {
 	Host       string                 // Host is the endpoint
 	Secret     *corev1.Secret         // Secret it's the secret to sync
 	Credential *ArgoClusterCredential // Credential contains the remote cluster credentials from argo cluster secret
-}
-
-func NewSyncDataFromSecret(secret *corev1.Secret) SyncData {
-	return SyncData{Secret: secret}
-}
-
-func (s *SyncData) UpdateSyncDataWithArgoClusterCredential(argoClusterCredential *ArgoClusterCredential) error {
-	s.Credential = argoClusterCredential
-	return nil
 }
 
 // check if certificate is expired or invalid
@@ -131,181 +108,4 @@ func checkSecret(ctx context.Context,
 	}
 	log.Infof("Secret certificate %s/%s OK for ingress: %s/%s",
 		secret.GetNamespace(), secret.GetName(), ingress.GetNamespace(), ingress.GetName())
-}
-
-func (s *SyncData) Synchronize() error {
-	if len(s.Host) == 0 {
-		log.Warnf("no host")
-		return nil
-	}
-	if s.Credential == nil {
-		log.Warnf("no credential")
-		return nil
-	}
-	if s.Secret == nil {
-		log.Info("nothing to synchronize")
-		return nil
-	}
-
-	restConfig, err := clientcmd.DefaultClientConfig.ClientConfig()
-	if err != nil {
-		return fmt.Errorf("unable to create dfault client config: %v", err)
-	}
-	restConfig.Host = s.Host
-	restConfig.CAData = s.Credential.CAData
-	restConfig.CertData = s.Credential.CertData
-	restConfig.KeyData = s.Credential.KeyData
-	coreclient, err := corev1client.NewForConfig(restConfig)
-	if err != nil {
-		return fmt.Errorf("unable to init core client from restConfig: %v", err)
-	}
-
-	secret := corev1.Secret{
-		ObjectMeta: v1.ObjectMeta{
-			Name:        s.Secret.GetName(),
-			Namespace:   "",
-			Labels:      s.Secret.GetLabels(),
-			Annotations: s.Secret.GetAnnotations(),
-		},
-		Data: s.Secret.Data,
-	}
-
-	netclient, err := netv1client.NewForConfig(restConfig)
-	if err != nil {
-		return fmt.Errorf("unable to init networking client from restConfig: %v", err)
-	}
-	var wg sync.WaitGroup
-	defer wg.Done()
-	ingresses, err := netclient.Ingresses("").List(context.Background(), v1.ListOptions{})
-	for _, currentIngress := range ingresses.Items {
-		log.Infof("can you see the ingress? %s", currentIngress.GetName())
-		for _, tls := range currentIngress.Spec.TLS {
-			if tls.SecretName == s.Secret.GetName() {
-				wg.Add(1)
-				go checkSecret(context.TODO(), currentIngress, coreclient, secret)
-			}
-		}
-	}
-	wg.Wait()
-
-	return nil
-}
-
-func onAddCertSecret(obj interface{}) {
-	log.Info("onAddCertSecret")
-	secret := obj.(*corev1.Secret)
-	if secret == nil {
-		log.Warnf("unable to type assert to secret object")
-		return
-	}
-
-	cn := secret.ObjectMeta.Annotations["cert-manager.io/common-name"]
-	log.Infof("onAddCertSecret CN: %s", cn)
-	if len(cn) == 0 {
-		log.Warnf("No common name found in secret %s/%s", secret.GetNamespace(), secret.GetName())
-		return
-	}
-	result, ok := cluster2Certs.Load(cn)
-	var sd SyncData
-	switch ok {
-	case true:
-		sd = result.(SyncData)
-	}
-	sd.Secret = secret
-	cluster2Certs.Store(cn, SyncData{Secret: secret})
-	if err := sd.Synchronize(); err != nil {
-		log.Errorf("onAddCertSecret: couldn't synchronize: %v", err)
-		return
-	}
-	log.Infof("Secret synchronized")
-	return
-}
-
-func onAddArgoClusterSecret(obj interface{}) {
-	log.Info("onAddArgoClusterSecret")
-	secret := obj.(*corev1.Secret)
-	if secret == nil {
-		log.Warnf("unable to type assert to secret object")
-		return
-	}
-
-	server := string(secret.Data["server"])
-	log.Infof("Got secret with server: %s", server)
-	name := string(secret.Data["name"])
-	if len(name) == 0 {
-		log.Errorf("no name definedd in secret. This looks like the 'in-cluster' ArgoCD secret. Skip it.")
-		return
-	}
-	log.Infof("Got secret with name: %s", name)
-	var argoCreds ArgoClusterCredential
-	if err := json.Unmarshal(secret.Data["config"], &argoCreds); err != nil {
-		log.Errorf("unable to unmarshal secret to cluster with server %s: %v", server, err)
-		return
-	}
-
-	var sd SyncData
-	sd.Host = server
-	result, ok := cluster2Certs.Load(name)
-	if ok {
-		sd = result.(SyncData)
-	}
-	sd.Credential = &argoCreds
-	cluster2Certs.Store(name, sd)
-	if err := sd.Synchronize(); err != nil {
-		log.Errorf("onAddArgoClusterSecret: couldn't synchronize: %v", err)
-		return
-	}
-	log.Infof("Secret synchronized")
-	return
-}
-
-func DoTheJob() {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		// maybe we're not in cluster
-		kubeconfig := filepath.Join(os.Getenv("HOME"), ".kube", "config")
-		config, err = clientcmd.BuildConfigFromFlags("", kubeconfig)
-		if err != nil {
-			log.Fatal(err)
-		}
-		log.Infof("Not in cluster, using %s", kubeconfig)
-	}
-	// TODO add WorkQueue, add CrashHandler, add leaderEleection
-	clientset, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	argoClusterSecretsOnly := informers.WithTweakListOptions(func(opts *v1.ListOptions) {
-		opts.LabelSelector = "argocd.argoproj.io/secret-type=cluster"
-	})
-	argoClusterSecretFactory := informers.NewSharedInformerFactoryWithOptions(clientset, 5*time.Second,
-		informers.WithNamespace(ArgoNs), argoClusterSecretsOnly)
-	argoClusterSecretsInformer := argoClusterSecretFactory.Core().V1().Secrets().Informer()
-
-	certManagerSecretsOnly := informers.WithTweakListOptions(func(opts *v1.ListOptions) {
-		opts.LabelSelector = "controller.cert-manager.io/fao=true"
-	})
-	certManagerSecretsSecretFactory := informers.NewSharedInformerFactoryWithOptions(clientset, 5*time.Second,
-		informers.WithNamespace(CertsNs), certManagerSecretsOnly)
-	certManagerSecretsInformer := certManagerSecretsSecretFactory.Core().V1().Secrets().Informer()
-
-	stopper := make(chan struct{})
-
-	defer close(stopper)
-	defer runtime.HandleCrash()
-
-	argoClusterSecretsInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: onAddArgoClusterSecret,
-	})
-	log.Infof("Watching for argoCD cluster secrets namespace: %s", ArgoNs)
-	go argoClusterSecretsInformer.Run(stopper)
-
-	certManagerSecretsInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: onAddCertSecret,
-	})
-	log.Infof("Watching for cert-manager cluster secrets namespace: %s", CertsNs)
-	go certManagerSecretsInformer.Run(stopper)
-
-	<-stopper
 }
