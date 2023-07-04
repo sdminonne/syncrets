@@ -8,7 +8,10 @@
 *.so
 *.dylib
 
-syncrets
+#ignore all files without extensions
+*
+!*.*
+!*/
 
 .idea/*
 
